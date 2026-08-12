@@ -1,5 +1,26 @@
 # ps_lib
 
+## Qbox installation
+
+This Cajun Built fork is configured for Qbox. Keep the cloned resource folder
+named exactly `ps_lib` and start it after the Qbox and Overextended resources:
+
+```cfg
+ensure oxmysql
+ensure ox_lib
+ensure ox_inventory
+ensure qbx_core
+ensure ps_lib
+```
+
+The Qbox QB compatibility bridge must remain enabled (its default):
+
+```cfg
+set qbx:enablebridge "true"
+```
+
+Place that convar before `ensure qbx_core`.
+
 Welcome to **ps_lib**!  
 This library has been a long time coming, and we're passionate about what it can become. If you're reading this, you're among the early adopters, and we appreciate you checking it out.
 

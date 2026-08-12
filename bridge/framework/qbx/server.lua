@@ -210,7 +210,11 @@ end
 --- @description Returns a table of all players in the server.
 --- @usage local allPlayers = ps.getAllPlayers()
 function ps.getAllPlayers()
-    return qbx:GetQBPlayers()
+    local sources = {}
+    for source in pairs(qbx:GetQBPlayers() or {}) do
+        sources[#sources + 1] = source
+    end
+    return sources
 end
 
 --- @param source any
@@ -255,13 +259,13 @@ end
 function ps.getNearbyPlayers(source, distance)
     if not distance then distance = 10.0 end
     local players = {}
-    for k, v in pairs(ps.getAllPlayers()) do
-        local dist = #(GetEntityCoords(GetPlayerPed(v.PlayerData.source)) - GetEntityCoords(GetPlayerPed(source)))
-        if dist < 5.0 then
+    for _, playerSource in pairs(ps.getAllPlayers()) do
+        local dist = #(GetEntityCoords(GetPlayerPed(playerSource)) - GetEntityCoords(GetPlayerPed(source)))
+        if dist < distance then
             table.insert(players, {
-                value = ps.getIdentifier(v.PlayerData.source),
-                label = ps.getPlayerName(v.PlayerData.source),
-                source = v.PlayerData.source,
+                value = ps.getIdentifier(playerSource),
+                label = ps.getPlayerName(playerSource),
+                source = playerSource,
                 distance = dist,
             })
         end
@@ -275,13 +279,8 @@ end
 --- @description Returns the count of players with a specific job who are on duty.
 --- @usage local jobCount = ps.getJobCount('police')
 function ps.getJobCount(jobName)
-    local count = 0
-    for _, player in pairs(ps.getAllPlayers()) do
-        if player.job and player.job.name == jobName and ps.getJobDuty(player.source) then
-            count = count + 1
-        end
-    end
-    return count
+    local count = qbx:GetDutyCountJob(jobName)
+    return count or 0
 end
 
 --- comment
@@ -290,15 +289,8 @@ end
 --- @description Returns the count of players with a specific job type who are on duty.
 --- @usage local jobTypeCount = ps.getJobTypeCount('leo')
 function ps.getJobTypeCount(jobType)
-    local count = 0
-    for _, playerData in pairs(ps.getAllPlayers()) do
-        if playerData.PlayerData.job.type == jobType then
-            if playerData.PlayerData.job.onduty then
-                count += 1
-            end
-        end
-    end
-    return count
+    local count = qbx:GetDutyCountType(jobType)
+    return count or 0
 end
 
 --- @param item string
@@ -320,23 +312,7 @@ function ps.setJob(source, jobName, jobGrade)
     if not source or not jobName or not jobGrade then
         return false
     end
-    local player = ps.getPlayer(source)
-    local job = qbx:GetJobs()[jobName]
-    player.PlayerData.job = {
-        name = jobName,
-        label = job.label,
-        isboss = job.grades[jobGrade].isboss or false,
-        onduty = job.defaultDuty or false,
-        payment = job.grades[jobGrade].payment or 0,
-        type = job.type,
-        grade = {
-            name = job.grades[jobGrade].name,
-            level = jobGrade
-        }
-    }
-    TriggerEvent('QBCore:Server:OnJobUpdate', player.PlayerData.source, player.PlayerData.job)
-    TriggerClientEvent('QBCore:Client:OnJobUpdate', player.PlayerData.source, player.PlayerData.job)
-    exports.qbx_core:SetPlayerData(player.PlayerData.citizenid, 'job', player.PlayerData.job)
+    return qbx:SetJob(source, jobName, tonumber(jobGrade) or 0)
 end
 
 --- @param source number

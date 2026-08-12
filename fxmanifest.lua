@@ -40,3 +40,9 @@ files {
 }
 
 ui_page 'web/build/index.html'
+
+dependencies {
+  'qbx_core',
+  'oxmysql',
+  'ox_lib'
+}

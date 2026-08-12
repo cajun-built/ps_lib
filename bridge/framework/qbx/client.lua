@@ -16,7 +16,7 @@ AddEventHandler('onResourceStop', function(resourceName)
 end)
 AddEventHandler('onResourceStart', function(resourceName)
     if resourceName == GetCurrentResourceName() then
-        if PlayerPedId() then
+        if QBX.PlayerData and QBX.PlayerData.citizenid and QBX.PlayerData.charinfo then
             ps.ped = PlayerPedId()
             ps.charinfo = QBX.PlayerData.charinfo
             ps.citizenid = QBX.PlayerData.citizenid
@@ -52,26 +52,33 @@ function ps.getPlayer()
 end
 
 function ps.getVehicleLabel(model)
-    if not IsPedInAnyVehicle(ps.getPlayer(), false) then
-        return false
+    local modelHash = model
+    if type(model) == 'number' and DoesEntityExist(model) then
+        modelHash = GetEntityModel(model)
     end
 
-    model = GetEntityModel(model)
-    local vehicle = exports.qbx_core:GetVehiclesByName(model)
+    if type(modelHash) == 'string' then
+        modelHash = joaat(modelHash)
+    end
+
+    local vehicle = exports.qbx_core:GetVehiclesByHash(modelHash)
 
     if vehicle then
-        return vehicle.name
+        return vehicle.name or vehicle.label
     else
-        return GetDisplayNameFromVehicleModel(model)
+        return GetDisplayNameFromVehicleModel(modelHash)
     end
 end
 
 function ps.isDead()
-    local isDead = exports.qbx_medical:IsDead()
-    local inLaststand = exports.qbx_medical:IsLaststand()
+    if GetResourceState('qbx_medical') == 'started' then
+        local isDead = exports.qbx_medical:IsDead()
+        local inLaststand = exports.qbx_medical:IsLaststand()
+        return isDead or inLaststand
+    end
 
-    if isDead or inLaststand then return true end
-    return false
+    local ped = PlayerPedId()
+    return IsEntityDead(ped) or IsPedFatallyInjured(ped)
 end
 
 function ps.getJob()
