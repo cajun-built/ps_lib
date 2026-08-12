@@ -8,8 +8,8 @@ named exactly `ps_lib` and start it after the Qbox and Overextended resources:
 ```cfg
 ensure oxmysql
 ensure ox_lib
-ensure ox_inventory
 ensure qbx_core
+ensure ox_inventory
 ensure ps_lib
 ```
 
