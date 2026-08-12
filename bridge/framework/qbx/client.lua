@@ -1,4 +1,16 @@
 
+local QBX = {
+    PlayerData = exports.qbx_core:GetPlayerData() or {}
+}
+
+RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
+    QBX.PlayerData = {}
+end)
+
+RegisterNetEvent('QBCore:Player:SetPlayerData', function(value)
+    QBX.PlayerData = value or {}
+end)
+
 AddEventHandler('QBCore:Client:OnPlayerLoaded', function()
     ps.ped = PlayerPedId()
     ps.charinfo = QBX.PlayerData.charinfo

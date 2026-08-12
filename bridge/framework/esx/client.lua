@@ -1,10 +1,3 @@
-
-local esxJOBCompat = {
-    ['police'] = 'leo',
-    ['unemployed'] = 'loser'
-}
-
-
 local esxMetadata = {
     health = 0,
     armor = 0,
@@ -13,250 +6,238 @@ local esxMetadata = {
     stress = 0,
 }
 
+local function normalizeJob(job)
+    if not job then return nil end
+    local duty = job.onDuty
+    if duty == nil then duty = job.onduty end
+    if duty == nil then duty = true end
+    local level = tonumber(job.grade) or tonumber(job.grade_level) or 0
+    local name = job.grade_name or tostring(level)
 
-AddEventHandler('onResourceStop', function(resourceName)
-    if resourceName == GetCurrentResourceName() then
-        ps.ped = nil
-        ps.charinfo = nil
-        ps.name = nil
-        ps.identifier = nil
-    end
-end)
+    return {
+        id = job.id,
+        name = job.name,
+        label = job.label or job.name,
+        type = job.type or 'civ',
+        onDuty = duty == true,
+        onduty = duty == true,
+        isboss = name == 'boss',
+        payment = tonumber(job.grade_salary) or 0,
+        grade = {
+            level = level,
+            name = name,
+            label = job.grade_label or name,
+            payment = tonumber(job.grade_salary) or 0,
+        },
+        grade_level = level,
+        grade_name = name,
+        grade_label = job.grade_label or name,
+        grade_salary = tonumber(job.grade_salary) or 0,
+    }
+end
 
-AddEventHandler('esx:playerLoaded', function(playerData)
+local function normalizedPlayerData()
+    local data = ESX.GetPlayerData() or {}
+    local metadata = data.metadata or {}
+    local charinfo = {
+        firstname = data.firstName or '',
+        lastname = data.lastName or '',
+        birthdate = data.dateofbirth,
+        age = data.dateofbirth,
+        gender = data.sex,
+        phone = data.phoneNumber,
+    }
+
+    return {
+        source = GetPlayerServerId(PlayerId()),
+        citizenid = data.identifier,
+        identifier = data.identifier,
+        name = ((charinfo.firstname or '') .. ' ' .. (charinfo.lastname or '')):gsub('^%s+', ''):gsub('%s+$', ''),
+        charinfo = charinfo,
+        metadata = metadata,
+        job = normalizeJob(data.job),
+        money = data.accounts or {},
+        raw = data,
+    }
+end
+
+local function refreshLocalData(playerData)
+    playerData = playerData or ESX.GetPlayerData() or {}
     ps.ped = PlayerPedId()
     ps.charinfo = {
-        firstname = playerData.firstName,
-        lastname = playerData.lastName,
+        firstname = playerData.firstName or '',
+        lastname = playerData.lastName or '',
+        birthdate = playerData.dateofbirth,
         age = playerData.dateofbirth,
-        gender = playerData.sex
+        gender = playerData.sex,
     }
-    ps.name = playerData.firstName .. " " .. playerData.lastName
+    ps.name = ((ps.charinfo.firstname or '') .. ' ' .. (ps.charinfo.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
     ps.identifier = playerData.identifier
-    ps.debug(ps.ped, ps.charinfo, ps.name, ps.identifier)
+end
+
+AddEventHandler('onResourceStop', function(resourceName)
+    if resourceName ~= GetCurrentResourceName() then return end
+    ps.ped = nil
+    ps.charinfo = nil
+    ps.name = nil
+    ps.identifier = nil
 end)
 
-AddEventHandler("esx_status:onTick", function(data)
-    local hunger, thirst, stress 
-    for i = 1, #data do
-        if data[i].name == "thirst" then
-            thirst = math.floor(data[i].percent)
-        end
-        if data[i].name == "hunger" then
-            hunger = math.floor(data[i].percent)
-        end
-        if data[i].name == "stress" then
-            stress = math.floor(data[i].percent)
+AddEventHandler('onResourceStart', function(resourceName)
+    if resourceName == GetCurrentResourceName() then
+        refreshLocalData()
+    end
+end)
+
+RegisterNetEvent('esx:playerLoaded', function(playerData)
+    refreshLocalData(playerData)
+end)
+
+RegisterNetEvent('esx:onPlayerLogout', function()
+    ps.charinfo = nil
+    ps.name = nil
+    ps.identifier = nil
+end)
+
+AddEventHandler('esx_status:onTick', function(data)
+    for i = 1, #(data or {}) do
+        if esxMetadata[data[i].name] ~= nil then
+            esxMetadata[data[i].name] = math.floor(data[i].percent or 0)
         end
     end
-    esxMetadata.health = math.floor((GetEntityHealth(ESX.PlayerData.ped) - 100) / 100 * 100)
-    esxMetadata.armor = GetPedArmour(ESX.PlayerData.ped)
-    esxMetadata.thirst = thirst
-    esxMetadata.hunger = hunger
-    esxMetadata.stress = stress
+    local ped = PlayerPedId()
+    esxMetadata.health = math.max(0, GetEntityHealth(ped) - 100)
+    esxMetadata.armor = GetPedArmour(ped)
 end)
 
 RegisterNetEvent('esx:setJob', function(job)
     ESX.PlayerData.job = job
 end)
 
----@return: table
----@DESCRIPTION: Returns the player's data, including job, gang, and metadata.
 function ps.getPlayerData()
-
-    return ESX.GetPlayerData()
+    return normalizedPlayerData()
 end
 
---- @return: string
---- @DESCRIPTION: Returns the player's citizen ID.
---- @example: ps.getIdentifier()
 function ps.getIdentifier()
     return ps.getPlayerData().identifier
 end
+ps.getCid = ps.getIdentifier
 
---- @PARAM: meta: string
---- @return: any
---- @DESCRIPTION: Returns specific metadata for the player.
---- @example: ps.getMetadata('isdead')
 function ps.getMetadata(meta)
-    if esxMetadata[meta] ~= nil then
-        return esxMetadata[meta]
-    end
-    if meta == 'isdead' then
-        return ESX.PlayerData.dead
-    end
+    if esxMetadata[meta] ~= nil then return esxMetadata[meta] end
+    if meta == 'isdead' then return ps.isDead() end
     return ps.getPlayerData().metadata[meta]
 end
 
---- @PARAM: info: string
---- @return: any
---- @DESCRIPTION: Returns specific character information based on the provided key.
---- @example: ps.getCharInfo('age')
 function ps.getCharInfo(info)
-    local playerData = ps.getPlayerData()
-    local charinfo = {
-            firstname = playerData.firstName,
-            lastname = playerData.lastName,
-            age = playerData.dateofbirth,
-            gender = playerData.sex
-        }
-    return charinfo[info]
+    return ps.getPlayerData().charinfo[info]
 end
 
---- @return: string
---- @DESCRIPTION: Returns the player's full name.
 function ps.getPlayerName()
-    return ESX.getName()
+    return ps.getPlayerData().name
 end
+ps.getName = ps.getPlayerName
 
---- @return: number
---- @DESCRIPTION: Returns the player's ped ID.
 function ps.getPlayer()
     return PlayerPedId()
 end
 
---- @PARAM: model: number | string
---- @RETURN: string
---- @DESCRIPTION: Returns the vehicle label for the given model.
 function ps.getVehicleLabel(model)
-    local vehicle = ps.callback('ps_lib:esx:getVehicleLabel', model)
-    return vehicle or GetDisplayNameFromVehicleModel(model)
+    local lookup = model
+    if type(model) == 'number' and DoesEntityExist(model) then
+        lookup = GetEntityModel(model)
+    end
+    local display = type(lookup) == 'number' and GetDisplayNameFromVehicleModel(lookup) or tostring(lookup)
+    return ps.callback('ps_lib:esx:getVehicleLabel', display) or display
 end
-   
 
---- @DESCRIPTION: Checks if the player is dead or in last stand.
---- @return boolean
---- @example if ps.isDead() then Revive end
 function ps.isDead()
-   return ESX.PlayerData.dead
+    local data = ESX.GetPlayerData() or {}
+    local metadata = data.metadata or {}
+    if data.dead == true or metadata.dead == true or metadata.isdead == true then return true end
+    local ped = PlayerPedId()
+    return IsEntityDead(ped) or IsPedFatallyInjured(ped)
 end
 
---- @return: table
---- @DESCRIPTION: Returns the player's job information, including name, type, and duty status.
 function ps.getJob()
-    return ESX.PlayerData.job
+    return ps.getPlayerData().job
 end
 
---- @RETURN: string
---- @DESCRIPTION: Returns the name of the player's job.
---- @example: ps.getJobName()
 function ps.getJobName()
-    return ps.getJob().name
+    local job = ps.getJob()
+    return job and job.name or nil
 end
 
 function ps.getJobDuty()
-    return ps.getJob().onDuty
-end
-function ps.getJobLabel()
-    return ps.getJob().label
-end
---- @RETURN: string
---- @DESCRIPTION: Returns the type of the player's job.
---- @example: ps.getJobType()
-function ps.getJobType()
-    return esxJOBCompat[ps.getJob().name] or 'none'
+    local job = ps.getJob()
+    return job and job.onduty == true or false
 end
 
---- @RETURN: boolean
---- @DESCRIPTION: Checks if the player's job is a boss job.
---- @example: if ps.isBoss() then TriggerEvent('qb-bossmenu:client:openMenu') end
+function ps.getJobLabel()
+    local job = ps.getJob()
+    return job and job.label or nil
+end
+
+function ps.getJobType()
+    local job = ps.getJob()
+    return job and job.type or 'civ'
+end
+
 function ps.isBoss()
-    return ps.getJob().grade_name == 'boss'
+    local job = ps.getJob()
+    return job and job.isboss == true or false
 end
 
 function ps.defaultDuty()
     local job = ps.getJob()
-    if job.name == 'police' or job.name == 'ambulance' or job.name == 'mechanic' then
-        return false
-    end
-    return true
+    return job and job.onduty == true or false
 end
 
-
---- @RETURN: boolean
---- @DESCRIPTION: Checks if the player is on duty for their job.
---- @example: if ps.getJobDuty() then TriggerEvent('qb-phone:client:openJobPhone') end
-
-
---- @PARAM: data: string
---- @RETURN: any
---- @DESCRIPTION: Returns the job data for the specified key.
 function ps.getJobData(data)
     local job = ps.getJob()
-    return job[data]
+    if not data then return job end
+    return job and job[data] or nil
 end
 
---- @return: table
---- @DESCRIPTION: Returns the player's gang information, including name, type, and duty status.
---- @example: ps.getGang()
+function ps.getGang() return nil end
+function ps.getGangName() return nil end
+function ps.getGangData() return nil end
+function ps.isLeader() return false end
 
-function ps.getGang()
-    local player = ps.getPlayerData()
-    return player.job
-end
-
---- @RETURN: string
---- @DESCRIPTION: Returns the name of the player's gang.
---- @example: ps.getGangName()
---- @
---- @-- Does esx support Gangs?
---function ps.getGangName()
---    local job = ps.getGang()
---    return job.name
---end
-
---- @RETURN: string
---- @DESCRIPTION: Returns if the player is a gang boss.
---- @example: ps.isLeader()
-function ps.isLeader()
-    local Gang = ps.getGang()
-    return false
-end
-
-
---- @PARAM: data: string
---- @RETURN: any
---- @DESCRIPTION: Returns specific data from the gang information.
---function ps.getGangData(data)
---    local Gang = ps.getGang()
---    return Gang[data]
---end
-
---- @RETURN: boolean
---- @DESCRIPTION: Checks the coords of the player.
---- @example: if ps.getCoords() then  end
 function ps.getCoords()
-    return GetEntityCoords(ps.ped)
+    return GetEntityCoords(PlayerPedId())
 end
 
 function ps.getMoneyData()
-    local money = {
-        cash = ESX.PlayerData.money,
-        bank = ESX.GetAccount('bank').money,
-    }
-    return money
+    local result = { cash = 0, bank = 0 }
+    local data = ESX.GetPlayerData() or {}
+    for _, account in ipairs(data.accounts or {}) do
+        if account.name == 'money' then result.cash = account.money or 0 end
+        if account.name == 'bank' then result.bank = account.money or 0 end
+    end
+    if data.money then result.cash = data.money end
+    return result
 end
-function ps.getMoney(type)
-    return ps.getMoneyData()[type] or 0
+
+function ps.getMoney(accountType)
+    return ps.getMoneyData()[accountType or 'cash'] or 0
 end
 
 function ps.getAllMoney()
-    local money = ps.getMoneyData()
     local moneyData = {}
-    for k, v in pairs(money) do
-       table.insert(moneyData, {
-            amount = v,
-            name = k
-        })
+    for name, amount in pairs(ps.getMoneyData()) do
+        moneyData[#moneyData + 1] = { amount = amount, name = name }
     end
     return moneyData
 end
 
 exports('getPlayerData', ps.getPlayerData)
 exports('getIdentifier', ps.getIdentifier)
+exports('getCid', ps.getCid)
 exports('getMetadata', ps.getMetadata)
 exports('getCharInfo', ps.getCharInfo)
 exports('getPlayerName', ps.getPlayerName)
+exports('getName', ps.getName)
 exports('getPlayer', ps.getPlayer)
 exports('getVehicleLabel', ps.getVehicleLabel)
 exports('isDead', ps.isDead)
@@ -275,8 +256,3 @@ exports('getCoords', ps.getCoords)
 exports('getMoneyData', ps.getMoneyData)
 exports('getMoney', ps.getMoney)
 exports('getAllMoney', ps.getAllMoney)
-
-ps.registerCallback('ps:esx:jobDuty', function(job)
-    ESX.PlayerData.job = job
-    return true
-end)

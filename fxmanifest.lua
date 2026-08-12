@@ -10,7 +10,6 @@ description 'Project Sloth Library'
 author 'Project Sloth'
 
 client_scripts {
-    '@qbx_core/modules/playerdata.lua',
     'startFirst/client/**.lua',
     'modules/**/client/**.lua',
     'bridge/client.lua',
@@ -42,7 +41,6 @@ files {
 ui_page 'web/build/index.html'
 
 dependencies {
-  'qbx_core',
   'oxmysql',
   'ox_lib'
 }

@@ -88,6 +88,15 @@ function ps.getMetadata(source, meta)
     return player.PlayerData.metadata[meta]
 end
 
+function ps.setMetadata(sourceOrIdentifier, meta, value)
+    local player = type(sourceOrIdentifier) == 'number'
+        and QBCore.Functions.GetPlayer(sourceOrIdentifier)
+        or QBCore.Functions.GetPlayerByCitizenId(sourceOrIdentifier)
+    if not player or not player.Functions or not player.Functions.SetMetaData then return false end
+    player.Functions.SetMetaData(meta, value)
+    return true
+end
+
 --- @param source any
 --- @param info string
 --- @return any

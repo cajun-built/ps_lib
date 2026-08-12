@@ -90,6 +90,10 @@ function ps.getMetadata(source, meta)
     return player.PlayerData.metadata[meta]
 end
 
+function ps.setMetadata(sourceOrIdentifier, meta, value)
+    return qbx:SetMetadata(sourceOrIdentifier, meta, value)
+end
+
 --- param source any
 --- @param info string
 --- @return any

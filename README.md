@@ -1,9 +1,11 @@
 # ps_lib
 
-## Qbox installation
+## Framework installation
 
-This Cajun Built fork is configured for Qbox. Keep the cloned resource folder
-named exactly `ps_lib` and start it after the Qbox and Overextended resources:
+This Cajun Built fork supports Qbox, QBCore, and ESX Legacy. Keep the cloned
+resource folder named exactly `ps_lib`.
+
+### Qbox
 
 ```cfg
 ensure oxmysql
@@ -20,6 +22,19 @@ set qbx:enablebridge "true"
 ```
 
 Place that convar before `ensure qbx_core`.
+
+### ESX Legacy
+
+```cfg
+ensure oxmysql
+ensure ox_lib
+ensure es_extended
+ensure ps_lib
+```
+
+The framework is detected automatically. Do not start `qbx_core` or
+`qb-core` on the ESX server. If the server uses `ox_inventory`, start it
+after `es_extended` and before `ps_lib`.
 
 Welcome to **ps_lib**!  
 This library has been a long time coming, and we're passionate about what it can become. If you're reading this, you're among the early adopters, and we appreciate you checking it out.

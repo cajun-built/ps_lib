@@ -1,226 +1,352 @@
-ps.Shared = {}
-local esxJOBCompat = {
-    ['police'] = 'leo',
-    ['unemployed'] = 'loser',
-    ['ambulance'] = 'ems',
-    ['mechanic'] = 'mechanic',
-    ['cardealer'] = 'cardealer',
-
-}
+ps.Shared = ps.Shared or {}
 
 local jobs, vehicles = {}, {}
-local function handleJobGrades(jobName)
-    local result = MySQL.query.await('SELECT * FROM job_grades WHERE job_name = ?', {jobName})
-    local grades = {}
-    for k, v in pairs(result) do
-        grades[tostring(v.grade)] = {
-            name = v.label,
-            payment = v.salary,
+
+local legacyJobTypes = {
+    police = 'leo',
+    ambulance = 'ems',
+    mechanic = 'mechanic',
+}
+
+local function normalizeJob(job)
+    if not job then return nil end
+
+    local gradeLevel = tonumber(job.grade) or tonumber(job.grade_level) or 0
+    local gradeName = job.grade_name or (type(job.grade) == 'table' and job.grade.name) or tostring(gradeLevel)
+    local gradeLabel = job.grade_label or gradeName
+    local duty = job.onDuty
+    if duty == nil then duty = job.onduty end
+    if duty == nil then duty = true end
+
+    return {
+        id = job.id,
+        name = job.name,
+        label = job.label or job.name,
+        type = job.type or (jobs[job.name] and jobs[job.name].type) or 'civ',
+        onDuty = duty == true,
+        onduty = duty == true,
+        payment = tonumber(job.grade_salary) or 0,
+        isboss = gradeName == 'boss',
+        grade = {
+            level = gradeLevel,
+            name = gradeName,
+            label = gradeLabel,
+            payment = tonumber(job.grade_salary) or 0,
+        },
+        grade_level = gradeLevel,
+        grade_name = gradeName,
+        grade_label = gradeLabel,
+        grade_salary = tonumber(job.grade_salary) or 0,
+    }
+end
+
+local function normalizeOnlinePlayer(xPlayer)
+    if not xPlayer then return nil end
+
+    local metadata = xPlayer.getMeta and xPlayer.getMeta() or xPlayer.metadata or {}
+    local charinfo = {
+        firstname = xPlayer.firstName or '',
+        lastname = xPlayer.lastName or '',
+        birthdate = xPlayer.dateofbirth,
+        gender = xPlayer.sex,
+        phone = xPlayer.phoneNumber,
+    }
+
+    xPlayer.PlayerData = {
+        source = xPlayer.source,
+        citizenid = xPlayer.identifier,
+        identifier = xPlayer.identifier,
+        name = xPlayer.name,
+        charinfo = charinfo,
+        metadata = metadata or {},
+        job = normalizeJob(xPlayer.job),
+        money = xPlayer.getAccounts and xPlayer.getAccounts(true) or {},
+        items = xPlayer.getInventory and xPlayer.getInventory() or {},
+    }
+
+    return xPlayer
+end
+
+local function normalizeOfflinePlayer(row)
+    if not row then return nil end
+
+    local metadata = {}
+    if row.metadata and row.metadata ~= '' then
+        metadata = json.decode(row.metadata) or {}
+    end
+
+    local job = jobs[row.job] or {}
+    local grade = job.grades and job.grades[tostring(row.job_grade)] or {}
+    local name = ((row.firstname or '') .. ' ' .. (row.lastname or '')):gsub('^%s+', ''):gsub('%s+$', '')
+
+    return {
+        source = nil,
+        identifier = row.identifier,
+        name = name ~= '' and name or row.identifier,
+        firstName = row.firstname,
+        lastName = row.lastname,
+        dateofbirth = row.dateofbirth,
+        sex = row.sex,
+        job = {
+            name = row.job,
+            label = job.label or row.job,
+            type = job.type or 'civ',
+            grade = tonumber(row.job_grade) or 0,
+            grade_name = grade.name or tostring(row.job_grade or 0),
+            grade_label = grade.label or grade.name or tostring(row.job_grade or 0),
+            grade_salary = grade.payment or 0,
+            onDuty = metadata.jobDuty ~= false,
+        },
+        metadata = metadata,
+        PlayerData = {
+            source = nil,
+            citizenid = row.identifier,
+            identifier = row.identifier,
+            name = name,
+            charinfo = {
+                firstname = row.firstname or '',
+                lastname = row.lastname or '',
+                birthdate = row.dateofbirth,
+                gender = row.sex,
+                phone = row.phone_number,
+            },
+            metadata = metadata,
+            job = normalizeJob({
+                name = row.job,
+                label = job.label or row.job,
+                type = job.type or 'civ',
+                grade = tonumber(row.job_grade) or 0,
+                grade_name = grade.name or tostring(row.job_grade or 0),
+                grade_label = grade.label or grade.name or tostring(row.job_grade or 0),
+                grade_salary = grade.payment or 0,
+                onDuty = metadata.jobDuty ~= false,
+            }),
+        },
+    }
+end
+
+local function loadSharedData()
+    local hasType = (MySQL.scalar.await([[
+        SELECT COUNT(*) FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'jobs' AND column_name = 'type'
+    ]]) or 0) > 0
+    local jobRows = MySQL.query.await(
+        hasType and 'SELECT name, label, type FROM jobs' or 'SELECT name, label FROM jobs',
+        {}
+    ) or {}
+    local gradeRows = MySQL.query.await('SELECT job_name, grade, name, label, salary FROM job_grades', {}) or {}
+
+    for _, row in ipairs(jobRows) do
+        jobs[row.name] = {
+            name = row.name,
+            label = row.label or row.name,
+            defaultDuty = true,
+            type = row.type or legacyJobTypes[row.name] or 'civ',
+            offDutyPay = 0,
+            grades = {},
         }
-        if v.label == 'boss' then
-            jobs[jobName].isboss = v.grade
+    end
+
+    for _, row in ipairs(gradeRows) do
+        local job = jobs[row.job_name]
+        if job then
+            local grade = {
+                name = row.name or row.label,
+                label = row.label or row.name,
+                level = tonumber(row.grade) or 0,
+                payment = tonumber(row.salary) or 0,
+                isboss = row.name == 'boss',
+            }
+            job.grades[tostring(row.grade)] = grade
         end
     end
-    return grades
-end
 
-local function loadJobsCompat()
-    local result = MySQL.query.await('SELECT * FROM jobs',{})
-    for k, v in pairs(result) do
-        jobs[v.name] = {
-            label = v.label,
-            defaultDuty = false,
-            type = esxJOBCompat[v.name] or 'none',
-            offDutyPay = 0,
-            grades = handleJobGrades(v.name),
+    local vehicleRows = MySQL.query.await('SELECT model, name, price, category FROM vehicles', {}) or {}
+    for _, row in ipairs(vehicleRows) do
+        vehicles[string.lower(tostring(row.model))] = {
+            name = row.name,
+            label = row.name,
+            model = row.model,
+            price = row.price,
+            category = row.category,
         }
     end
 end
 
-local function loadVehiclesCompat()
-    local result = MySQL.query.await('SELECT * FROM vehicles')
-    for k, v in pairs(result) do
-        vehicles[v.model] = {
-            name = v.name,
-            price = v.price,
-            category = v.category,
-        }
-    end
-end
-loadJobsCompat()
-loadVehiclesCompat()
+loadSharedData()
 ps.Shared.Vehicles = vehicles
 ps.Shared.Jobs = jobs
 
-ps.registerCallback('ps_lib:esx:getVehicleLabel', function(model)
-   MySQL.query.await('SELECT name FROM vehicles WHERE model = ?', {model}, function(result)
-      if result and result[1] then
-         return result[1].name
-      else
-         return GetDisplayNameFromVehicleModel(model)
-      end
-   end)
+ps.registerCallback('ps_lib:esx:getVehicleLabel', function(_, model)
+    local row = MySQL.single.await('SELECT name FROM vehicles WHERE LOWER(model) = LOWER(?) LIMIT 1', { tostring(model) })
+    return row and row.name or tostring(model)
 end)
 
-function ps.getJobTable()
-    return jobs
-end
----
 function ps.getPlayer(source)
-    return ESX.GetPlayerFromId(source)
+    return normalizeOnlinePlayer(ESX.GetPlayerFromId(tonumber(source)))
 end
 
 function ps.getPlayerByIdentifier(identifier)
-    return ESX.GetPlayerFromIdentifier(identifier)
+    return normalizeOnlinePlayer(ESX.GetPlayerFromIdentifier(identifier))
 end
 
 function ps.getOfflinePlayer(identifier)
-    return ESX.GetPlayerFromIdentifier(identifier)
+    local online = ps.getPlayerByIdentifier(identifier)
+    if online then return online end
+
+    local row = MySQL.single.await([[
+        SELECT identifier, firstname, lastname, dateofbirth, sex, phone_number,
+               job, job_grade, metadata
+        FROM users WHERE identifier = ? LIMIT 1
+    ]], { identifier })
+    return normalizeOfflinePlayer(row)
 end
 
 function ps.getIdentifier(source)
-    local Player = ps.getPlayer(source)
-    if not Player then return nil end
-    return Player.getIdentifier()
+    local player = ps.getPlayer(source)
+    return player and player.identifier or nil
 end
 
 function ps.getSource(identifier)
     local player = ps.getPlayerByIdentifier(identifier)
-    if not player then return nil end
-    return player.source
+    return player and player.source or nil
 end
 
 function ps.getPlayerName(source)
     local player = ps.getPlayer(source)
-    return player.name
+    return player and player.name or nil
 end
 
 function ps.getPlayerNameByIdentifier(identifier)
     local player = ps.getPlayerByIdentifier(identifier) or ps.getOfflinePlayer(identifier)
-    if not player then return 'Unknown Person' end
-    return player.name
+    return player and player.name or 'Unknown Person'
 end
 
 function ps.getPlayerData(source)
     local player = ps.getPlayer(source)
-    return player.PlayerData
-end
-
-local function getStatus(source, type)
-    local player = ps.getPlayer(source)
-    for k, v in pairs (player.variables.status) do 
-        if v.name == type then 
-            return math.floor(v.percent)
-        end
-    end
-    return 0
+    return player and player.PlayerData or nil
 end
 
 function ps.getMetadata(source, meta)
     local player = ps.getPlayer(source)
-    local metas = {
-        hunger = getStatus(source, 'hunger'),
-        thirst = getStatus(source, 'thirst'),
-        stress = getStatus(source, 'stress'),
-        isdead = player.isDead,
-    }
-    return metas[meta]
+    if not player then return nil end
+    if meta == 'isdead' then
+        return player.getMeta and player.getMeta('dead') or false
+    end
+    return player.getMeta and player.getMeta(meta) or (player.metadata and player.metadata[meta])
+end
+
+function ps.setMetadata(sourceOrIdentifier, meta, value)
+    local player = type(sourceOrIdentifier) == 'number'
+        and ps.getPlayer(sourceOrIdentifier)
+        or ps.getPlayerByIdentifier(sourceOrIdentifier)
+
+    if player and player.setMeta then
+        player.setMeta(meta, value)
+        normalizeOnlinePlayer(player)
+        return true
+    end
+
+    if type(sourceOrIdentifier) ~= 'string' then return false end
+    local row = MySQL.single.await('SELECT metadata FROM users WHERE identifier = ? LIMIT 1', { sourceOrIdentifier })
+    if not row then return false end
+    local metadata = row.metadata and json.decode(row.metadata) or {}
+    metadata[meta] = value
+    return (MySQL.update.await('UPDATE users SET metadata = ? WHERE identifier = ?', {
+        json.encode(metadata), sourceOrIdentifier
+    }) or 0) > 0
 end
 
 function ps.getCharInfo(source, info)
-    local player = ps.getPlayer(source)
-    local charinfo = {
-        firstname = player.firstName,
-        lastname = player.lastName,
-        birthdate = player.dateofbirth,
-        gender = player.sex
-    }
-    return charinfo[info] or nil
+    local data = ps.getPlayerData(source)
+    return data and data.charinfo and data.charinfo[info] or nil
 end
 
 function ps.getJob(source)
-    local player = ps.getPlayer(source)
-    return player.job
+    local data = ps.getPlayerData(source)
+    return data and data.job or nil
 end
 
 function ps.getJobName(source)
-    local player = ps.getPlayer(source)
-    return player.job.name
+    local job = ps.getJob(source)
+    return job and job.name or nil
 end
 
 function ps.getJobType(source)
-    local player = ps.getPlayer(source)
-    return esxJOBCompat[player.job.name] or 'none'
+    local job = ps.getJob(source)
+    return job and job.type or 'civ'
 end
 
 function ps.getJobDuty(source)
-    local player = ps.getPlayer(source)
-    return player.job.onDuty
+    local job = ps.getJob(source)
+    return job and job.onduty == true or false
 end
 
-
 function ps.getJobData(source, data)
-    local player = ps.getPlayer(source)
-    return player.job[data]
+    local job = ps.getJob(source)
+    if not data then return job end
+    return job and job[data] or nil
 end
 
 function ps.getJobGrade(source)
-    local player = ps.getPlayer(source)
-    return player.job.grade
+    local job = ps.getJob(source)
+    return job and job.grade or nil
 end
 
 function ps.getJobGradeLevel(source)
-    local player = ps.getPlayer(source)
-    return player.job.grade_level
+    local grade = ps.getJobGrade(source)
+    return grade and grade.level or nil
 end
 
 function ps.getJobGradeName(source)
-    local player = ps.getPlayer(source)
-    return player.job.grade_name
+    local grade = ps.getJobGrade(source)
+    return grade and grade.name or nil
 end
 
 function ps.getJobGradePay(source)
-    local player = ps.getPlayer(source)
-    return player.job.grade_salary
+    local grade = ps.getJobGrade(source)
+    return grade and grade.payment or 0
 end
 
 function ps.isBoss(source)
-    local name = ps.getJobGradeName(source)
-    return name == 'boss'
+    local job = ps.getJob(source)
+    return job and job.isboss == true or false
 end
 
 function ps.getAllPlayers()
+    if ESX.GetExtendedPlayers then
+        return ESX.GetExtendedPlayers(nil, nil, true)
+    end
     return ESX.GetPlayers()
 end
 
 function ps.getEntityCoords(source)
     return GetEntityCoords(GetPlayerPed(source))
 end
+
 function ps.getDistance(source, location)
     local pcoords = GetEntityCoords(GetPlayerPed(source))
-    local loc = vector3(location.x, location.y, location.z)
-    return #(pcoords - loc)
+    return #(pcoords - vector3(location.x, location.y, location.z))
 end
 
 function ps.checkDistance(source, location, distance)
-    if not distance then distance = 2.5 end
-    local pcoords = GetEntityCoords(GetPlayerPed(source))
-    local loc = vector3(location.x, location.y, location.z)
-    return #(pcoords - loc) <= distance
+    return ps.getDistance(source, location) <= (distance or 2.5)
 end
 
 function ps.getNearbyPlayers(source, distance)
-    if not distance then distance = 10.0 end
     local players = {}
-    for k, v in pairs(ps.getAllPlayers()) do
-        local dist = #(GetEntityCoords(GetPlayerPed(v)) - GetEntityCoords(GetPlayerPed(source)))
-        if dist < 5.0 then
-            table.insert(players, {
-                id = ps.getIdentifier(v),
-                name = ps.getPlayerName(v),
-                source = v,
-                distance = dist,
-            })
+    for _, playerSource in pairs(ps.getAllPlayers() or {}) do
+        playerSource = tonumber(playerSource)
+        if playerSource and playerSource ~= tonumber(source) then
+            local dist = #(GetEntityCoords(GetPlayerPed(playerSource)) - GetEntityCoords(GetPlayerPed(source)))
+            if dist < (distance or 10.0) then
+                players[#players + 1] = {
+                    value = ps.getIdentifier(playerSource),
+                    label = ps.getPlayerName(playerSource),
+                    source = playerSource,
+                    distance = dist,
+                }
+            end
         end
     end
     return players
@@ -228,21 +354,18 @@ end
 
 function ps.getJobCount(jobName)
     local count = 0
-    for _, player in pairs(ps.getAllPlayers()) do
-        local p = ps.getPlayer(player)
-        if p.job.name == jobName and p.job['onDuty'] then
+    for _, playerSource in pairs(ps.getAllPlayers() or {}) do
+        if ps.getJobName(playerSource) == jobName and ps.getJobDuty(playerSource) then
             count = count + 1
         end
     end
     return count
 end
 
-function ps.getJobTypeCount(jobName)
+function ps.getJobTypeCount(jobType)
     local count = 0
-    for _, player in pairs(ps.getAllPlayers()) do
-        local playerData = ps.getPlayerData(player)
-        local typeJob = esxJOBCompat[playerData.job.name] or 'none'
-        if playerData.job and typeJob == jobName and ps.getJobDuty(player) then
+    for _, playerSource in pairs(ps.getAllPlayers() or {}) do
+        if ps.getJobType(playerSource) == jobType and ps.getJobDuty(playerSource) then
             count = count + 1
         end
     end
@@ -256,8 +379,8 @@ end
 
 function ps.setJob(source, jobName, rank)
     local player = ps.getPlayer(source)
-    local exist = ESX.DoesJobExist(jobName, rank)
-    if not exist then return false end
+    rank = tonumber(rank) or 0
+    if not player or not ESX.DoesJobExist(jobName, rank) then return false end
     player.setJob(jobName, rank)
     return true
 end
@@ -265,175 +388,116 @@ end
 function ps.setJobDuty(source, duty)
     local player = ps.getPlayer(source)
     if not player then return false end
-    player.setJob(player.job.name, player.job.grade, duty)
-    return false
+    player.setJob(player.job.name, player.job.grade, duty == true)
+    return true
 end
 
-function ps.addMoney(source,type, amount, reason)
+function ps.addMoney(source, accountType, amount, reason)
     local player = ps.getPlayer(source)
-    if not player then return end
-    if type == 'cash' then
+    if not player then return false end
+    if accountType == nil or accountType == 'cash' then
         player.addMoney(amount, reason or 'Added by script')
         return true
-    elseif type == 'bank' then
+    end
+    if accountType == 'bank' then
         player.addAccountMoney('bank', amount, reason or 'Added by script')
         return true
     end
     return false
 end
 
-function ps.removeMoney(source, type,  amount, reason)
-
+function ps.removeMoney(source, accountType, amount, reason)
     local player = ps.getPlayer(source)
-    if not player then return end
-    if type == 'cash' then
-        local balance = player.getAccount('money').money
-        if balance - amount < 0 then return false end
-        player.removeAccountMoney('money', amount, reason or 'Removed by script')
-        return true
-    elseif type == 'bank' then
-        local balance = player.getAccount('bank').money
-        if balance - amount >= 0 then
-            player.removeAccountMoney('bank', amount, reason or 'Removed by script')
-            return true
-        end
-    end
-    return false
+    if not player then return false end
+    accountType = accountType or 'cash'
+    local account = accountType == 'cash' and player.getAccount('money') or player.getAccount(accountType)
+    if not account or account.money < amount then return false end
+    player.removeAccountMoney(account.name, amount, reason or 'Removed by script')
+    return true
 end
 
-function ps.getMoney(source, type)
+function ps.getMoney(source, accountType)
     local player = ps.getPlayer(source)
     if not player then return 0 end
-    if not type then type = 'cash' end
-    if type == 'cash' then
-        return player.getMoney()
-    elseif type == 'bank' then
-        return player.getAccount('bank').money
-    end
-end
-
-local function getGradesFormatted(jobName)
-    local grades = MySQL.query.await('SELECT * FROM job_grades WHERE job_name = ?', {jobName})
-    local formattedGrades = {}
-    for i = 1, #grades do
-        local grade = grades[i]
-        formattedGrades[grade.grade] = {
-            name = grade.label,
-            level = grade.grade,
-            payment = grade.salary,
-        }
-    end
-    return formattedGrades
+    accountType = accountType or 'cash'
+    local account = player.getAccount(accountType == 'cash' and 'money' or accountType)
+    return account and account.money or 0
 end
 
 function ps.getAllJobs()
-    local jobSend = {}
-    for k, v in pairs (jobs) do
-        table.insert(jobSend, k)
-    end
-    return jobSend
+    local names = {}
+    for name in pairs(jobs) do names[#names + 1] = name end
+    return names
+end
+
+function ps.getJobTable()
+    return jobs
 end
 
 function ps.getSharedJob(jobName)
-    if not jobName then return nil end
-    local job = ps.Shared.Jobs[jobName]
-    if not job then return nil end
-    return job
+    return jobName and jobs[jobName] or nil
+end
+
+function ps.getSharedJobData(jobName, data)
+    local job = ps.getSharedJob(jobName)
+    if not data then return job end
+    return job and job[data] or nil
 end
 
 function ps.getSharedJobGrade(jobName, grade)
-    if type(grade) == 'number' then
-        grade = tostring(grade)
-    end
-    local job = ps.Shared.Jobs[jobName]
-    if not job then return nil end
-    
-    local job = ps.Shared.Jobs[jobName]
-    return job.grades[grade] or nil
+    local job = ps.getSharedJob(jobName)
+    return job and job.grades[tostring(grade)] or nil
 end
 
--- Someone PR This 
-function ps.getGang(source)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang
+function ps.getSharedVehicle(model)
+    if not model then return nil end
+    return vehicles[string.lower(tostring(model))]
 end
 
-function ps.getGangName(source)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang.name
+function ps.getSharedVehicleData(model, data)
+    local vehicle = ps.getSharedVehicle(model)
+    if not data then return vehicle end
+    return vehicle and vehicle[data] or nil
 end
 
-function ps.getGangData(source, data)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang[data]
-end
-
-function ps.getGangGrade(source)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang.grade
-end
-
-function ps.getGangGradeLevel(source)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang.grade.level
-end
-
-function ps.getGangGradeName(source)
-   -- local player = ps.getPlayer(source)
-   -- return player.PlayerData.gang.grade.name
-end
-
-function ps.isLeader(source)
-    --local player = ps.getPlayer(source)
-    --return player.PlayerData.gang.isboss
-end
-
-function ps.getAllGangs()
-    --local gangsArray = {}
-    --for k, v in pairs(qbx:GetGangs()) do
-    --    table.insert(gangsArray, k)
-    --end
-    --return gangsArray
-end
-
--- End PR Plz
+function ps.getGang() return nil end
+function ps.getGangName() return nil end
+function ps.getGangData() return nil end
+function ps.getGangGrade() return nil end
+function ps.getGangGradeLevel() return nil end
+function ps.getGangGradeName() return nil end
+function ps.isLeader() return false end
+function ps.getAllGangs() return {} end
 
 function ps.vehicleOwner(licensePlate)
-    local vehicle = MySQL.query.await('SELECT * FROM owned_vehicles WHERE plate = ?', {licensePlate})
-    if not vehicle or #vehicle == 0 then
-        return false
-    end
-    return vehicle[1].owner
+    return MySQL.scalar.await('SELECT owner FROM owned_vehicles WHERE plate = ? LIMIT 1', { licensePlate }) or false
 end
 
 function ps.jobExists(jobName)
-    return ps.Shared.Jobs[jobName] ~= nil
+    return jobs[jobName] ~= nil
 end
 
 function ps.hasPermission(source, permission)
-    if IsPlayerAceAllowed(source, permission) then
-        return true
-    end
+    return IsPlayerAceAllowed(source, permission) == true
 end
 
 function ps.getSharedItems()
-    return exports.ox_inventory:GetItems()
+    if GetResourceState('ox_inventory') == 'started' then
+        return exports.ox_inventory:GetItems()
+    end
+    return ESX.GetItems and ESX.GetItems() or ESX.Items or {}
 end
 
 function ps.getItemLabel(item)
     local itemData = ps.getSharedItems()[item]
-    if not itemData then return item end
-    return itemData.label
+    return itemData and itemData.label or item
 end
 
 function ps.getItemWeight(item)
     local itemData = ps.getSharedItems()[item]
-    if not itemData then return 0 end
-    return itemData.weight or 0
+    return itemData and itemData.weight or 0
 end
 
-
 RegisterNetEvent('ps_lib:server:toggleDuty', function(bool)
-    local src = source
-    ps.setJobDuty(src, bool)
+    ps.setJobDuty(source, bool)
 end)
