@@ -498,6 +498,14 @@ function ps.getItemWeight(item)
     return itemData and itemData.weight or 0
 end
 
-RegisterNetEvent('ps_lib:server:toggleDuty', function(bool)
-    ps.setJobDuty(source, bool)
+RegisterNetEvent('ps_lib:server:toggleDuty', function(duty)
+    local playerSource = source
+
+    -- Callers such as ps-mdt send no value because this is a toggle action.
+    -- Preserve explicit true/false requests, otherwise invert current duty.
+    if type(duty) ~= 'boolean' then
+        duty = not ps.getJobDuty(playerSource)
+    end
+
+    ps.setJobDuty(playerSource, duty)
 end)
