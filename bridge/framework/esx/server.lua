@@ -217,6 +217,10 @@ function ps.getPlayerName(source)
     return player and player.name or nil
 end
 
+-- Legacy ps resources still call getName. Keep the alias on ESX so those
+-- resources behave the same way they do on the QB/Qbox bridges.
+ps.getName = ps.getPlayerName
+
 function ps.getPlayerNameByIdentifier(identifier)
     local player = ps.getPlayerByIdentifier(identifier) or ps.getOfflinePlayer(identifier)
     return player and player.name or 'Unknown Person'
