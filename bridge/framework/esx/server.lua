@@ -22,7 +22,11 @@ local function normalizeJob(job)
         id = job.id,
         name = job.name,
         label = job.label or job.name,
-        type = job.type or (jobs[job.name] and jobs[job.name].type) or 'civ',
+        -- The database-backed jobs table is populated asynchronously after
+        -- oxmysql is ready. Keep stock ESX emergency jobs usable during that
+        -- short startup window instead of temporarily classifying them as
+        -- civilians.
+        type = job.type or (jobs[job.name] and jobs[job.name].type) or legacyJobTypes[job.name] or 'civ',
         onDuty = duty == true,
         onduty = duty == true,
         payment = tonumber(job.grade_salary) or 0,
@@ -173,7 +177,6 @@ local function loadSharedData()
     end
 end
 
-loadSharedData()
 ps.Shared.Vehicles = vehicles
 ps.Shared.Jobs = jobs
 
@@ -512,4 +515,14 @@ RegisterNetEvent('ps_lib:server:toggleDuty', function(duty)
     end
 
     ps.setJobDuty(playerSource, duty)
+end)
+
+-- Do not await database readiness in the middle of this bridge file. FiveM
+-- can mark ps_lib started and begin dependent resources while an awaited
+-- oxmysql query is suspended; every function declared below that await was
+-- consequently missing from exports.ps_lib:init(). Register the complete API
+-- first, then hydrate the shared ESX tables once oxmysql is actually ready.
+MySQL.ready(function()
+    loadSharedData()
+    ps.success('ESX shared jobs and vehicles loaded')
 end)
