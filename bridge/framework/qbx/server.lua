@@ -595,6 +595,10 @@ end
 
 RegisterNetEvent('ps_lib:server:toggleDuty', function()
     local src = source
+    local jobType = ps.getJobType(src)
+    if jobType == 'leo' then
+        return ps.notify(src, 'LEO duty is managed through the MDT', 'error')
+    end
     local duty = ps.getJobDuty(src)
     if duty then 
         ps.setJobDuty(src, false)
